@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  cuda-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: pytorch-custom-backend
+    container_name: pytorch-custom-backend
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+    working_dir: /workspace
+
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/workspace
+    command: bash
