@@ -22,8 +22,8 @@ RUN apt-get update && apt-get install -y \
 # 'python' 명령어를 'python3'로 연결
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
-# PyTorch 설치
-RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+COPY requirements.txt requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # locale 설정
 RUN locale-gen en_US.UTF-8

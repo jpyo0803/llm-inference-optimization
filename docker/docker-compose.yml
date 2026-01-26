@@ -16,8 +16,9 @@ services:
 
     working_dir: /workspace
 
-    stdin_open: true
-    tty: true
     volumes:
       - ../:/workspace
-    command: bash
+    command: python benchmark.py
+
+    stdin_open: true
+    tty: true
