@@ -45,6 +45,8 @@ from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.generic import check_model_inputs
 from transformers.models.llama.configuration_llama import LlamaConfig
 
+# 내가 만든 custom 모듈 임포트
+from custom_module.custom_linear import CustomLinear 
 
 logger = logging.get_logger(__name__)
 
@@ -146,9 +148,9 @@ class LlamaMLP(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.mlp_bias)
+        self.gate_proj = CustomLinear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
+        self.up_proj = CustomLinear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
+        self.down_proj = CustomLinear(self.intermediate_size, self.hidden_size, bias=config.mlp_bias)
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
@@ -207,16 +209,16 @@ class LlamaAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
 
-        self.q_proj = nn.Linear(
+        self.q_proj = CustomLinear(
             config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
         )
-        self.k_proj = nn.Linear(
+        self.k_proj = CustomLinear(
             config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
-        self.v_proj = nn.Linear(
+        self.v_proj = CustomLinear(
             config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
-        self.o_proj = nn.Linear(
+        self.o_proj = CustomLinear(
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
 
@@ -419,7 +421,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         super().__init__(config)
         self.model = LlamaModel(config)
         self.vocab_size = config.vocab_size
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = CustomLinear(config.hidden_size, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()

@@ -20,3 +20,9 @@ def seed_everything(seed: int = 42):
     # 속도가 약간 느려질 수 있지만, 같은 입력에 대해 무조건 같은 결과를 보장합니다.
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+import gc
+
+def clean_gpu_memory():
+    gc.collect()
+    torch.cuda.empty_cache()
