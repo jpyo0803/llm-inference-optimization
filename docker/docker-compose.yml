@@ -18,7 +18,8 @@ services:
 
     volumes:
       - ../:/workspace
-    command: python benchmark.py
+    # command: python benchmark.py
+    command: tail -f /dev/null
 
     stdin_open: true
     tty: true

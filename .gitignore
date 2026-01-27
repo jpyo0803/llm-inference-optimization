@@ -1,1 +1,3 @@
 __pycache__
+build/
+simple_extension.egg-info/
