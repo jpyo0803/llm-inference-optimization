@@ -1,5 +1,5 @@
 import torch
-import simple_extension # 앞서 만든 모듈 import
+import custom_backend # 앞서 만든 모듈 import
 
 def test():
     print("--- Simple Addition Test ---")
@@ -12,7 +12,7 @@ def test():
     y = torch.tensor([4.0, 5.0, 6.0], device=device)
     
     # 내 C++ 함수 호출
-    output_custom = simple_extension.simple_add(x, y)
+    output_custom = custom_backend.add(x, y)
     
     # PyTorch 원래 덧셈
     output_native = x + y
@@ -22,7 +22,7 @@ def test():
     print(f"Custom Output: {output_custom}")
     print(f"Native Output: {output_native}")
     
-    # 4. 검증
+    # 검증
     if torch.allclose(output_custom, output_native):
         print("\nSuccess! Python <-> C++ Connection is working.")
     else:
