@@ -25,12 +25,15 @@ config = LlamaConfig(
     torch_dtype=torch.float16,
 )
 
+# Default attention 구현인 eager 모드 사용
+config._attn_implementation = "eager"
+
 # 벤치마크 하이퍼파라미퍼 (부하 조절용)
 PROMPT_LEN = 1024  # 입력 시퀀스 길이
 GEN_LEN = 512     # 생성할 토큰 수
-BATCH_SIZE = 1      # 배치 크기
-WARMUP_STEPS = 3   # 워밍업 스텝 수
-TEST_STEPS = 5   # 측정 스텝 수
+BATCH_SIZE = 2      # 배치 크기
+WARMUP_STEPS = 1   # 워밍업 스텝 수
+TEST_STEPS = 3   # 측정 스텝 수
 
 dummy_input = torch.randint(0, config.vocab_size, (BATCH_SIZE, PROMPT_LEN)).to(DEVICE)
 attention_mask = torch.ones_like(dummy_input).to(DEVICE)
