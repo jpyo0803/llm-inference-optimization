@@ -1,64 +1,72 @@
 import torch
 import custom_backend # 앞서 만든 모듈 import
+import time
+
+WARMUP_STEPS = 5
+TEST_STEPS = 10
+
+def run_benchmark(matmul_func, a, b):
+    # 워밍업
+    for _ in range(WARMUP_STEPS):
+        _ = matmul_func(a, b)
+
+    # 벤치마크
+    latencies = []
+    for _ in range(TEST_STEPS):
+        torch.cuda.synchronize()
+        start_time = time.time()
+        
+        c = matmul_func(a, b)
+        
+        torch.cuda.synchronize()
+        end_time = time.time()
+        
+        latencies.append((end_time - start_time) * 1000)  # 밀리초 단위
+
+    avg_latency = sum(latencies) / len(latencies)
+    return avg_latency, c # 검증을 위해 마지막 결과도 반환
 
 def test():
-    print("\n--- Custom MatMul Test (FP16) ---")
+    print("\n[Custom MatMul Test]\n")
     
-    # 1. 디바이스 설정
-    if not torch.cuda.is_available():
-        print("Error: CUDA device is required for this test.")
-        return
+    assert torch.cuda.is_available(), "CUDA device is required for this test."
     
     device = torch.device("cuda")
     dtype = torch.float16
-    print(f"Testing on device: {device}")
+
+    print(f"Target device: {device}")
 
     # 입력 데이터 준비 (Llama 3.2 1B 모델 흉내)
     # M: Batch Size * Seq Len (예: 1 * 128)
     # K: Input Features (Hidden Size, 예: 2048)
     # N: Output Features (예: 2048)
     M, K, N = 128, 2048, 2048
-    
-    print(f"Shapes -> Input: [{M}, {K}], Weight: [{N}, {K}]")
 
-    # 입력 데이터 (Row-Major)
-    x = torch.randn(M, K, device=device, dtype=dtype)
-    
-    # 가중치 데이터 (nn.Linear는 [Out, In] 형태로 저장됨 -> [N, K])
-    w = torch.randn(N, K, device=device, dtype=dtype)
+    a = torch.randn(M, K, device=device, dtype=dtype)
+    b = torch.randn(N, K, device=device, dtype=dtype)
+    print(f"A shape: [{M}, {K}], B shape: [{N}, {K}]")
 
-    # 내 C++ 함수 호출
-    # 커널 내부에서 W^T를 수행하므로 그대로 넘김
-    print("Running Custom Backend...", end="")
-    torch.cuda.synchronize() # 정확한 타이밍을 위해 대기
-    output_custom = custom_backend.matmul(x, w)
-    torch.cuda.synchronize()
-    print(" Done.")
+    # 커스텀 matmul 함수 벤치마크
+    custom_latency, custom_output = run_benchmark(custom_backend.matmul, a, b)
 
-    # PyTorch Native 연산 (비교군)
-    # 우리가 만든 커널은 Linear Layer용이므로 (X @ W.T)와 같음
-    print("Running PyTorch Native...", end="")
-    torch.cuda.synchronize()
-    output_native = torch.matmul(x, w.t()) # w를 Transpose 해줘야 함!
-    torch.cuda.synchronize()
-    print(" Done.")
+    # 기본 PyTorch matmul 함수 벤치마크
+    torch_latency, torch_output = run_benchmark(lambda x, y: torch.matmul(x, y.T), a, b)
 
     # 결과 검증
-    # FP16은 정밀도가 낮아 오차가 조금 있을 수 있으므로 rtol, atol을 넉넉히 줌
-    print(f"\nCustom Output Shape: {output_custom.shape}")
-    print(f"Native Output Shape: {output_native.shape}")
-    
-    # 최대 오차 계산
-    diff = (output_custom - output_native).abs().max().item()
-    print(f"Max Difference: {diff:.6f}")
-
-    if torch.allclose(output_custom, output_native, rtol=1e-2, atol=1e-2):
-        print("\nSuccess! Custom MatMul works correctly.")
+    if torch.allclose(custom_output, torch_output, atol=1e-2):
+        print("Outputs match within tolerance.")
     else:
-        print("\nFail! Results mismatch too much.")
-        # 디버깅용 출력
-        print("First 5 values (Custom):", output_custom[0, :5])
-        print("First 5 values (Native):", output_native[0, :5])
+        print("Outputs do not match!")
+
+    # 최대 차이 출력
+    max_diff = torch.max(torch.abs(custom_output - torch_output)).item()
+    print(f"Max difference between outputs: {max_diff:.6f}")
+
+    print(f"\n[Results]")
+    print(f"Custom MatMul Avg Latency: {custom_latency:.2f} ms")
+    print(f"PyTorch MatMul Avg Latency: {torch_latency:.2f} ms")
+    print(f"Speedup: {torch_latency / custom_latency:.2f}x")
+
 
 if __name__ == "__main__":
     test()
