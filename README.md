@@ -28,7 +28,7 @@
 Decoder Layer의 입력은 크게 다음 여섯 단계를 거쳐 생성된 출력을 다음 Decoder Layer로 전달합니다 (각 Decoder Layer은 동일한 과정을 반복함).
 
 1. **RMSNorm (input)**: 레이어로 입력된 입력에 **Root Mean Square (RMS)** 정규화를 적용합니다. 
-2. **Attention**: RMS Norm 출력에 Q, K, V Projection, RoPE, $Q\cdot K^{T}$, Softmax, $P\cdot V$, O Projection을 적용합니다.
+2. **Attention**: RMS Norm 출력에 Q, K, V Projection, RoPE, $Q\cdot K^{T}$, Softmax, $\text{Attn Score} \cdot V$, O Projection을 적용합니다.
 3. **Residual Addition**: Attention 출력에 입력(RMSNorm 이전의 값)을 더하는 Residual Addition을 적용합니다.
 4. **RMSNorm (post)**: Residual Addition 출력에 RMS 정규화를 적용합니다.
 5. **MLP (SwiGLU)**: RMSNorm 출력을 두 갈래로 나누어 Gate Projection과 Up Projection을 수행하고, 두 결과를 Element-wise Product 한 뒤 Down Projection을 적용합니다.
@@ -43,7 +43,7 @@ Prefill 단계는 사용자의 입력 프롬프트 전체를 처리하여 **첫 
 
 Prefill 과정에서 처리해야하는 토큰들은 같은 시점에 한꺼번에 주어지기 때문에 모든 토큰을 하나의 입력 행렬로 합쳐 Matrix-Matrix Multiplication (GEMM)이 가능합니다. (Batch 크기가 1인 경우 Token-level 합병이 가능)
 
-만약 Batch 크기가 1보다 큰 경우에는 Projection 타입인 경우에 한해($Q\cdot K^{T}$와 $P\cdot V$ 연산은 각 Request에 대해 독립적으로 처리해야함) 해당 Batch에 포함되어있는 Request들을 더 큰 단일 행렬로 합친 후 행렬 곱셈이 가능합니다. (Request-level 합병)
+만약 Batch 크기가 1보다 큰 경우에는 Projection 타입인 경우에 한해($Q\cdot K^{T}$와 $\text{Attn Score}\cdot V$ 연산은 각 Request에 대해 독립적으로 처리해야함) 해당 Batch에 포함되어있는 Request들을 더 큰 단일 행렬로 합친 후 행렬 곱셈이 가능합니다. (Request-level 합병)
 
 일반적으로 Token-, Request- level 순서로 합병이 가능할수록 GEMM은 더 높은 연산 밀도(Arithmetic Intensity)로 행렬 곱셈이 가능합니다.
 
@@ -57,6 +57,66 @@ Decode 단계에서 매 iteration마다 생성되는 토큰은 KV Cache에 순�
 Decode 단계의 중심이 되는 연산은 Matrix-Vector Multiplication (GEMV)입니다 (Batch Size가 클 경우 작은 GEMM 형태를 띠지만 여전히 Memory Bound 특성을 보입니다). GEMV는 연산 밀도가 낮은 연산으로 분류되어 일반적으로 연산량 대비 메모리 이동량이 압도하는 특징을 보입니다 (메모리 이동량 > 연산량).
 
 따라서 GEMV 연산의 경우 Host-Device간 메모리 이동량을 줄이는 기법인 **Weight Quantization**이나 **Kernel Fusion**을 통해 메모리 I/O를 줄이는 것이 최적화에 도움이 될 수 있습니다.
+
+## LLM 연산자 시간/공간 복잡도 분석
+LLM 연산자들의 시간 및 공간 복잡도 분석을 용이하게 하기 위해서는 Prefill 단계와 Decode 단계로 나누는 것이 좋습니다.
+
+### 크기 변수 정의
+P = Input Prompt Length  
+G = Generation Length  
+S = Sequence Length = P + G  
+D = Embedding Dim  
+
+또한 편의상 Q, K, V와 비슷하게 분석 가능한 O, Gate, Up, Down 프로젝션은 제외하였습니다.
+
+### Prefill Phase
+
+LLM 모델의 Decoder Layer에 속한 연산자들을 크게 세 가지 부류로 다음과 같이 나눌 수 있습니다.
+1. **Activation-Weight 행렬 곱셈 연산자 (LLM 아키텍처 구조 분석 다이어그램에서 파란색 연산자)**
+    - 입력으로 Activation과 Weight를 사용해 행렬 곱셈을 계산합니다.
+    - 같은 배치에 속한 요청들의 토큰을 하나의 커다란 행렬로 합친 후 행렬 곱셈이 가능합니다.
+    - Weight의 크기는 D x D 입니다.
+    - Activation의 크기는 P x D 입니다.
+    - Q, K, V 프로젝션이 이에 해당됩니다. (O, Gate, Up, Down도 비슷하게 분석 가능합니다.)
+    - 연산 복잡도는 $\Theta(P\cdot D^{2})$ 이며 최초에 한번만 발생합니다.
+    - 공간 복잡도는 $\Theta(P\cdot D + D^{2})$ 입니다. 
+2. **Activation-Activation 행렬 곱셈 연산자 (LLM 아키텍처 구조 분석 다이어그램에서 빨간색 연산자)**
+    - 입력으로 한 Activation과 또 다른 Activation을 사용해 행렬 곱셈을 계산합니다.
+    - 요청들이 같은 배치에 속하더라도 하나로 합칠 수 없습니다.
+    - Q, K, V 의 크기는 P x D 입니다.
+    - Attn Score 의 크기는 P x P 입니다.
+    - $Q\cdot K^{T}$의 연산 복잡도는 $\Theta(P^{2}\cdot D)$입니다. 공간 복잡도는 $\Theta(P\cdot D)$입니다.
+    - $\text{Attn Score}\cdot V$의 연산 복잡도도 동일하게 $\Theta(P^{2}\cdot D)$입니다. 공간 복잡도는 $\Theta(P^{2}+P\cdot D)$입니다.
+3. **Element-wise 연산자 (LLM 아키텍처 구조 분석 다이어그램에서 흰색 연산자)**
+    - 입력으로 들어온 행렬에 Element-wise 연산을 수행합니다.
+    - RMSNorm, RoPE, Softmax, Residual Addition, SiLU, Element-wise Matmul이 이에 해당됩니다.
+    - 시간 복잡도는 입력 행렬의 크기와 동일하기에 $\Theta(N^2)$ 정도 수준으로 Negligible합니다. **행렬 곱셈은 $\Theta(N^3)$ 수준**
+    - 공간 복잡도는 $\Theta(P\cdot D)$, $\Theta(P^{2})$입니다.
+
+### Decode Phase
+
+Prefill 단계와 비슷하게 Decode 단계에서도 세 가지 부류로 다음과 같이 나눕니다.
+1. **Activation-Weight 행렬 곱셈 연산자 (LLM 아키텍처 구조 분석 다이어그램에서 파란색 연산자)**
+    - 입력으로 Activation과 Weight를 사용해 행렬 곱셈을 계산합니다.
+    - 같은 배치에 속한 요청들의 토큰을 하나의 커다란 행렬로 합친 후 행렬 곱셈이 가능합니다.
+    - Weight의 크기는 D x D 입니다. (변하지 않았습니다)
+    - Activation의 크기는 1 x D 입니다. (KV Cache 덕에 매번 하나의 토큰에 대해서만 새롭게 계산합니다)
+    - Q, K, V 프로젝션이 이에 해당됩니다. (O, Gate, Up, Down도 비슷하게 분석 가능합니다.)
+    - 연산 복잡도는 $\Theta(1\cdot D^{2})$ 입니다.
+    - 공간 복잡도는 $\Theta(1\cdot D + D^{2})$ 입니다. 
+2. **Activation-Activation 행렬 곱셈 연산자 (LLM 아키텍처 구조 분석 다이어그램에서 빨간색 연산자)**
+    - 입력으로 한 Activation과 또 다른 Activation을 사용해 행렬 곱셈을 계산합니다.
+    - 요청들이 같은 배치에 속하더라도 하나로 합칠 수 없습니다.
+    - Q 의 크기는 1 x D 입니다.
+    - K, V 의 크기는 S x D 입니다. (KV Cache도 사용)
+    - Attn Score 의 크기는 1 x S 입니다.
+    - $Q\cdot K^{T}$의 연산 복잡도는 $\Theta(1\cdot D\cdot S)$입니다. 공간 복잡도는 $\Theta(D+S\cdot D)$입니다.
+    - $\text{Attn Score}\cdot V$의 연산 복잡도도 동일하게 $\Theta(1\cdot D\cdot S)$입니다. 공간 복잡도는 $\Theta(D+S\cdot D+S)$입니다.
+3. **Element-wise 연산자 (LLM 아키텍처 구조 분석 다이어그램에서 흰색 연산자)**
+    - 입력으로 들어온 행렬에 Element-wise 연산을 수행합니다.
+    - RMSNorm, RoPE, Softmax, Residual Addition, SiLU, Element-wise Matmul이 이에 해당됩니다.
+    - 시간 복잡도는 입력 행렬의 크기와 동일하기에 $\Theta(N)$ 정도 수준으로 Negligible합니다. **행렬 곱셈은 $\Theta(N^2)$ 수준**
+    - 공간 복잡도는 $\Theta(1\cdot D)$, $\Theta(S)$입니다.
 
 ## 실행 방법
 ```sh
