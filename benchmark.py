@@ -32,31 +32,34 @@ BATCH_SIZE = 1      # 배치 크기
 WARMUP_STEPS = 3   # 워밍업 스텝 수
 TEST_STEPS = 5   # 측정 스텝 수
 
-# 입력 데이터 생성
-input_ids = torch.randint(0, config.vocab_size, (BATCH_SIZE, PROMPT_LEN)).to(DEVICE)
+dummy_input = torch.randint(0, config.vocab_size, (BATCH_SIZE, PROMPT_LEN)).to(DEVICE)
+attention_mask = torch.ones_like(dummy_input).to(DEVICE)
 
 def benchmark(model):
     # 원본 Llama 모델 생성 및 GPU로 이동
-    model = model.to(DEVICE)
+    model = model.to(DEVICE).half()
     model.eval()
-
-    # 시간 측정 준비
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
 
     print("Warming up...")
     for _ in range(WARMUP_STEPS):
         with torch.no_grad():
             model.generate(
-                input_ids,
+                dummy_input,
+                attention_mask=attention_mask,
                 max_new_tokens=10,
                 min_new_tokens=10,
                 do_sample=False,
+                pad_token_id=config.vocab_size - 1,  # 경고 방지
             )
     
     print("Starting benchmark...")
     latencies = []
-    output_sum = 0.0  # 검증용 출력 누적 변수
+
+    # 시간 측정 준비
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+
+    first_token_id = -1
 
     for step in range(TEST_STEPS):
         torch.cuda.synchronize()
@@ -64,7 +67,8 @@ def benchmark(model):
 
         with torch.no_grad():
             output = model.generate(
-                input_ids,
+                dummy_input,
+                attention_mask=attention_mask,
                 max_new_tokens=GEN_LEN,
                 min_new_tokens=GEN_LEN,
                 do_sample=False,
@@ -74,26 +78,26 @@ def benchmark(model):
         end_event.record()
         torch.cuda.synchronize()
 
-        output_sum += output.sum().item()  # 검증용 출력 누적
+        if step == 0:
+            last_token_id = output[0, -1].item()
 
         elapsed_time_ms = start_event.elapsed_time(end_event)  # 밀리초 단위
         latencies.append(elapsed_time_ms)
         print(f"Step {step + 1}/{TEST_STEPS}: {elapsed_time_ms:.2f} ms")
 
     avg_latency_sec = sum(latencies) / len(latencies) / 1000  # 초 단위로 변환
-    total_tokens = GEN_LEN
-    tps = total_tokens / avg_latency_sec
-    print(f"\nAverage latency over {TEST_STEPS} steps: {avg_latency_sec:.2f} seconds")
-    print(f"Throughput: {tps:.2f} tokens/second")
 
-    return output_sum
+    return avg_latency_sec, last_token_id  # 평균 지연 시간과 마지막 생성 토큰 ID 반환
 
 def main():
     print("[Native Llama Model]")
     native_model = LlamaForCausalLM(config)
     state_dict = native_model.state_dict()
 
-    native_out = benchmark(native_model)
+    # 입력 데이터 생성
+    dummy_input = torch.randint(0, config.vocab_size, (BATCH_SIZE, PROMPT_LEN)).to(DEVICE)
+
+    native_avg_latency, native_last_token = benchmark(native_model)
     del native_model
     clean_gpu_memory()
 
@@ -102,11 +106,19 @@ def main():
     msg = custom_model.load_state_dict(state_dict, strict=False)
     print(f"Weight Loading Result: {msg}")
 
-    custom_out = benchmark(custom_model)
+    custom_avg_latency, custom_last_token = benchmark(custom_model)
     del custom_model
     clean_gpu_memory()
 
-    # 동일한 결과를 확인하기 위해서는 GEN_LEN을 1로 설정해야함
-    print(f"\nOutput checksum comparison: Native={native_out}, Custom={custom_out}")
+    if native_last_token == custom_last_token:
+        print(f"Last generated token matches: {native_last_token}")
+    else:
+        print(f"Last generated token mismatch! Native: {native_last_token}, Custom: {custom_last_token}")
+
+    print("\n[Benchmark Results]")
+    print(f"Native Model Avg Latency: {native_avg_latency:.2f} seconds")
+    print(f"Custom Model Avg Latency: {custom_avg_latency:.2f} seconds")
+    print(f"Speedup: {native_avg_latency / custom_avg_latency:.2f}x")
+
 if __name__ == "__main__":
     main()

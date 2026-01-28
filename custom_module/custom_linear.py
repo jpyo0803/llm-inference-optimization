@@ -2,36 +2,32 @@ import torch
 import torch.nn as nn
 import custom_backend # C++ Extension 모듈
 
-class CustomLinear(nn.Module):
-  def __init__(self, in_features, out_features, bias=True, dtype=torch.float16):
-    super().__init__()
-    self.in_features = in_features
-    self.out_features = out_features
-    self.dtype = dtype
+class CustomLinear(nn.Linear):
+  def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+    super().__init__(in_features, out_features, bias, device, dtype)
 
-    # 재현성을 위해서 시드를 고정하고 다음과 같이 초기화합니다.
-    self.weight = nn.Parameter(torch.randn(out_features, in_features, dtype=dtype))
+  def forward(self, input):
+    # input: [batch_size, seq_len, in_features]
 
-    if bias:
-        self.bias = nn.Parameter(torch.zeros(out_features, dtype=dtype))
-    else:
-        self.register_parameter('bias', None)
+    # 메모리 연속성 보장
+    if not input.is_contiguous():
+        input = input.contiguous()
 
-  def forward(self, x):
-    # x: [batch_size, seq_len, in_features]
+    # 3D -> 2D Flatten
+    # [Batch, Seq, In] -> [Batch * Seq, In]
+    orig_shape = input.shape
+    input_2d = input.view(-1, self.in_features)
 
-    # 입력을 2D 텐서로 변환합니다. 
-    # [batch_size * seq_len, in_features] -> [batch_size * seq_len, out_features]
-    orig_shape = x.shape
-    x_2d = x.view(-1, self.in_features)
+    # Custom Backend MatMul 호출
+    output_2d = custom_backend.matmul(input_2d, self.weight)
 
-    output_2d = custom_backend.matmul(x_2d, self.weight)
+    # 원래 차원으로 복구
+    output_shape = list(orig_shape)
+    output_shape[-1] = self.out_features
+    output = output_2d.view(*output_shape)
 
-    new_shape = list(orig_shape)
-    new_shape[-1] = self.out_features
-    output = output_2d.view(*new_shape)
-
+    # Bias 더하기
     if self.bias is not None:
-        output += self.bias
-    
+        output = output + self.bias
+        
     return output
