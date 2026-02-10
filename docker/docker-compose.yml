@@ -7,16 +7,12 @@ services:
       dockerfile: docker/Dockerfile
     image: llm-inference-optimization:latest
     container_name: llm-inference-optimization
-    ports:
-      - "30000:30000"
     runtime: nvidia
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: [gpu]
-    env_file:
-      - ../.env 
 
     working_dir: /workspace
 
@@ -27,3 +23,26 @@ services:
 
     stdin_open: true
     tty: true
+
+  llm-service-naive:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: llm-inference-optimization:latest
+    container_name: llm-service-naive
+    ports:
+      - "30000:30000"
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    env_file:
+      - ../.env
+
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace
+    command: python llm_service_naive.py
+    
