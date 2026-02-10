@@ -5,14 +5,18 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: pytorch-custom-backend
-    container_name: pytorch-custom-backend
+    image: llm-inference-optimization:latest
+    container_name: llm-inference-optimization
+    ports:
+      - "30000:30000"
     runtime: nvidia
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: [gpu]
+    env_file:
+      - ../.env 
 
     working_dir: /workspace
 
