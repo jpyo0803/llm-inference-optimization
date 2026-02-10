@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  cuda-dev:
+  llm-inference-optimization:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -13,7 +13,8 @@ services:
         reservations:
           devices:
             - capabilities: [gpu]
-
+    env_file:
+      - ../.env
     working_dir: /workspace
 
     volumes:
@@ -45,4 +46,19 @@ services:
     volumes:
       - ../:/workspace
     command: python llm_service_naive.py
-    
+
+  llm-service-onnx-triton:
+    image: nvcr.io/nvidia/tritonserver:24.12-py3
+    container_name: llm-service-onnx-triton
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8002:8002"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    volumes:
+      - ../model_repository:/models
+    command: ["tritonserver", "--model-repository=/models", "--log-verbose=1"]

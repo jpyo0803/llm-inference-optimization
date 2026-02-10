@@ -11,7 +11,7 @@ from transformers import AutoConfig, AutoTokenizer
 
 from model.modelling_llama import LlamaForCausalLM
 
-MODEL_ID = "meta-llama/Llama-3.2-3B-Instruct" # 구조(Config)만 빌려옴
+MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct" # 구조(Config)만 빌려옴
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 assert DEVICE == "cuda", "GPU is required to run this service."

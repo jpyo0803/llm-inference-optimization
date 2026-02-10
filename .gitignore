@@ -3,3 +3,4 @@ build/
 *.egg-info/
 .env
 venv
+model_repository/
